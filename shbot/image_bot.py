@@ -21,11 +21,8 @@ class Main(BaseModule):
         )
 
     async def on_load(self, event):
-        @message.on_group_message()
-        async def group_msg_handler(event: Event):
-            if event.get_platform() != "qqbot":
-                return
-
+        @message.on_message()
+        async def msg_handler(event: Event):
             text = self._strip_mention(event.get_text()).strip()
             if not text:
                 return
