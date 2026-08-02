@@ -247,6 +247,8 @@ class Main(BaseModule):
 
     async def _api_list_tags(self, request: Request):
         """获取所有词条列表"""
+        if not self._verify_token(request):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
         tags = _get_tags()
         result = []
         for tag_name, images in tags.items():
@@ -444,9 +446,9 @@ class Main(BaseModule):
                 title_en="Image Tags",
                 icon_svg='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>',
                 html_content=self._get_view_html(),
-                js_content=self._get_view_js(),
+                js_content="",
                 css_content=self._get_view_css(),
-                loader="loadShbotView",
+                loader="",
                 group="group_tools",
                 group_title="工具",
                 group_title_en="Tools",
@@ -457,7 +459,7 @@ class Main(BaseModule):
             self.logger.warning(f"注册 Dashboard 视窗失败: {e}")
 
     def _get_view_html(self) -> str:
-        """返回 Dashboard 视窗的 HTML 内容"""
+        """返回 Dashboard 视窗的 HTML 内容（含内联 JS）"""
         return '''
         <div class="shbot-dashboard">
             <div class="shbot-header">
@@ -470,10 +472,10 @@ class Main(BaseModule):
                 <div class="shbot-sidebar">
                     <div class="shbot-sidebar-header">
                         <span class="shbot-sidebar-title">词条列表</span>
-                        <button class="btn btn-primary btn-sm" onclick="showAddTagModal()">+ 新建</button>
+                        <button class="btn btn-primary btn-sm" id="shbotBtnAddTag">+ 新建</button>
                     </div>
                     <div class="shbot-search-box">
-                        <input type="text" class="shbot-search-input" placeholder="搜索词条..." oninput="filterTags(this.value)" />
+                        <input type="text" class="shbot-search-input" id="shbotSearchInput" placeholder="搜索词条..." />
                     </div>
                     <div class="shbot-tag-list" id="shbotTagList">
                         <div class="shbot-loading" id="shbotTagLoading">加载中...</div>
@@ -495,11 +497,11 @@ class Main(BaseModule):
         </div>
 
         <!-- 新建词条弹窗 -->
-        <div class="shbot-modal-overlay" id="shbotModalOverlay" onclick="closeModal()" style="display:none">
+        <div class="shbot-modal-overlay" id="shbotModalOverlay" style="display:none">
             <div class="shbot-modal" onclick="event.stopPropagation()">
                 <div class="shbot-modal-header">
                     <span class="shbot-modal-title" id="shbotModalTitle">新建词条</span>
-                    <button class="btn-icon" onclick="closeModal()">
+                    <button class="btn-icon" id="shbotBtnCloseModal">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                 </div>
@@ -509,11 +511,305 @@ class Main(BaseModule):
                     <div id="shbotModalError" style="color:var(--er-c);font-size:13px;margin-top:8px;display:none"></div>
                 </div>
                 <div class="shbot-modal-footer">
-                    <button class="btn btn-secondary" onclick="closeModal()">取消</button>
-                    <button class="btn btn-primary" onclick="confirmAddTag()">确定</button>
+                    <button class="btn btn-secondary" id="shbotBtnCancelModal">取消</button>
+                    <button class="btn btn-primary" id="shbotBtnConfirmAddTag">确定</button>
                 </div>
             </div>
         </div>
+
+        <script>
+        /* ---- 全局状态 ---- */
+        var shbotState = { tags: [], currentTag: null, filteredTags: [], _token: function() { return localStorage.getItem("__ep_tk__") || ""; } };
+
+        function shbotInit() {
+            /* 绑定事件（避免 onclick 属性造成的全局函数依赖） */
+            document.getElementById("shbotBtnAddTag").onclick = shbotShowAddTagModal;
+            document.getElementById("shbotBtnCloseModal").onclick = shbotCloseModal;
+            document.getElementById("shbotBtnCancelModal").onclick = shbotCloseModal;
+            document.getElementById("shbotBtnConfirmAddTag").onclick = shbotConfirmAddTag;
+            document.getElementById("shbotSearchInput").oninput = function() { shbotFilterTags(this.value); };
+            document.getElementById("shbotModalOverlay").onclick = shbotCloseModal;
+            shbotRefreshTagList();
+        }
+
+        /* ---- 词条列表 ---- */
+        async function shbotRefreshTagList() {
+            try {
+                var resp = await fetch("/Shbot/api/images", {
+                    headers: { "Authorization": "Bearer " + shbotState._token() }
+                });
+                var data = await resp.json();
+                shbotState.tags = data.tags || [];
+                shbotState.filteredTags = shbotState.tags;
+                shbotRenderTagList();
+            } catch(e) {
+                console.error("Failed to load tags", e);
+            }
+        }
+
+        function shbotRenderTagList() {
+            var el = document.getElementById("shbotTagList");
+            var list = shbotState.filteredTags;
+            if (!list || list.length === 0) {
+                el.innerHTML = '<div class="shbot-loading">\u6682\u65e0\u8bcd\u6761</div>';
+                return;
+            }
+            el.innerHTML = list.map(function(t) {
+                var active = shbotState.currentTag === t.name ? " active" : "";
+                var safeName = shbotEscAttr(t.name);
+                return '<div class="shbot-tag-item' + active + '" data-tagname="' + safeName + '">' +
+                    '<span class="shbot-tag-name">' + shbotEscHtml(t.name) + '</span>' +
+                    '<span class="shbot-tag-count">' + t.valid + "/" + t.total + "</span>" +
+                    "</div>";
+            }).join("");
+            /* 绑定点击事件 */
+            el.querySelectorAll(".shbot-tag-item").forEach(function(item) {
+                item.onclick = function() {
+                    shbotSelectTag(item.getAttribute("data-tagname"), item);
+                };
+            });
+        }
+
+        function shbotFilterTags(query) {
+            if (!query) {
+                shbotState.filteredTags = shbotState.tags;
+            } else {
+                var q = query.toLowerCase();
+                shbotState.filteredTags = shbotState.tags.filter(function(t) {
+                    return t.name.toLowerCase().indexOf(q) !== -1;
+                });
+            }
+            shbotRenderTagList();
+        }
+
+        function shbotSelectTag(tagName, el) {
+            document.querySelectorAll(".shbot-tag-item").forEach(function(e) { e.classList.remove("active"); });
+            if (el) el.classList.add("active");
+            shbotState.currentTag = tagName;
+            shbotLoadTagImages(tagName);
+        }
+
+        /* ---- 图片展示 ---- */
+        async function shbotLoadTagImages(tagName) {
+            var main = document.getElementById("shbotMain");
+            main.innerHTML = '<div class="shbot-tag-detail" id="shbotTagDetail"></div>';
+            var detail = document.getElementById("shbotTagDetail");
+
+            try {
+                var resp = await fetch("/Shbot/api/images/" + encodeURIComponent(tagName), {
+                    headers: { "Authorization": "Bearer " + shbotState._token() }
+                });
+                var data = await resp.json();
+                var images = data.images || [];
+
+                var headerHtml = '<div class="shbot-tag-detail-header">' +
+                    '<span class="shbot-tag-detail-title">' + shbotEscHtml(tagName) + ' (' + images.length + ' \u5f20)</span>' +
+                    '<div class="shbot-tag-detail-actions">' +
+                    '<button class="btn btn-danger btn-sm" id="shbotBtnDeleteTag">\u5220\u9664\u8bcd\u6761</button>' +
+                    '</div></div>';
+
+                var gridHtml = '<div class="shbot-image-grid" id="shbotImageGrid">';
+                if (images.length === 0) {
+                    gridHtml += '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--tx-t)">\u6682\u65e0\u56fe\u7247</div>';
+                } else {
+                    images.forEach(function(img) {
+                        gridHtml += '<div class="shbot-image-card">';
+                        if (img.exists && img.url) {
+                            gridHtml += '<img src="' + img.url + '" alt="' + shbotEscHtml(img.filename) + '" loading="lazy" />';
+                        } else {
+                            gridHtml += '<div style="height:140px;display:flex;align-items:center;justify-content:center;color:var(--er-c);font-size:12px">\u6587\u4ef6\u5df2\u4e22\u5931</div>';
+                        }
+                        gridHtml += '<button class="shbot-image-delete" data-index="' + img.index + '" title="\u5220\u9664">' +
+                            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>' +
+                            "</button>";
+                        gridHtml += '<div class="shbot-image-info">';
+                        gridHtml += '<span class="shbot-image-time">' + (img.time ? new Date(img.time * 1000).toLocaleString() : "") + "</span>";
+                        gridHtml += "</div></div>";
+                    });
+                }
+                gridHtml += "</div>";
+
+                var uploadHtml = '<div class="shbot-upload-area">' +
+                    '<label class="shbot-upload-btn" id="shbotUploadBtn">' +
+                    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>' +
+                    '\u4e0a\u4f20\u56fe\u7247' +
+                    '<input type="file" accept="image/*" id="shbotFileInput" />' +
+                    '</label>' +
+                    '</div>';
+
+                detail.innerHTML = headerHtml + gridHtml + uploadHtml;
+
+                /* 绑定事件 */
+                var deleteBtn = document.getElementById("shbotBtnDeleteTag");
+                if (deleteBtn) deleteBtn.onclick = function() { shbotConfirmDeleteTag(tagName); };
+
+                var fileInput = document.getElementById("shbotFileInput");
+                if (fileInput) fileInput.onchange = function() { shbotUploadImage(this, tagName); };
+
+                document.querySelectorAll(".shbot-image-delete").forEach(function(btn) {
+                    btn.onclick = function() { shbotDeleteImage(parseInt(this.getAttribute("data-index"))); };
+                });
+            } catch(e) {
+                detail.innerHTML = '<div class="shbot-empty"><p style="color:var(--er-c)">\u52a0\u8f7d\u5931\u8d25: ' + e.message + "</p></div>";
+            }
+        }
+
+        /* ---- 上传图片 ---- */
+        async function shbotUploadImage(input, tagName) {
+            var file = input.files[0];
+            if (!file) return;
+
+            var formData = new FormData();
+            formData.append("file", file);
+
+            try {
+                var resp = await fetch("/Shbot/api/images/" + encodeURIComponent(tagName), {
+                    method: "POST",
+                    headers: { "Authorization": "Bearer " + shbotState._token() },
+                    body: formData
+                });
+                var data = await resp.json();
+                if (data.success) {
+                    shbotShowToast("\u4e0a\u4f20\u6210\u529f", "success");
+                    input.value = "";
+                    shbotLoadTagImages(tagName);
+                    shbotRefreshTagList();
+                } else {
+                    shbotShowToast(data.error || "\u4e0a\u4f20\u5931\u8d25", "error");
+                }
+            } catch(e) {
+                shbotShowToast("\u4e0a\u4f20\u5931\u8d25: " + e.message, "error");
+            }
+        }
+
+        /* ---- 删除图片 ---- */
+        async function shbotDeleteImage(index) {
+            if (!shbotState.currentTag) return;
+            if (!confirm("\u786e\u5b9a\u8981\u5220\u9664\u8fd9\u5f20\u56fe\u7247\u5417\uff1f")) return;
+
+            try {
+                var resp = await fetch("/Shbot/api/images/" + encodeURIComponent(shbotState.currentTag) + "/delete", {
+                    method: "POST",
+                    headers: {
+                        "Authorization": "Bearer " + shbotState._token(),
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ index: index })
+                });
+                var data = await resp.json();
+                if (data.success) {
+                    shbotShowToast("\u5220\u9664\u6210\u529f", "success");
+                    shbotLoadTagImages(shbotState.currentTag);
+                    shbotRefreshTagList();
+                } else {
+                    shbotShowToast(data.error || "\u5220\u9664\u5931\u8d25", "error");
+                }
+            } catch(e) {
+                shbotShowToast("\u5220\u9664\u5931\u8d25: " + e.message, "error");
+            }
+        }
+
+        /* ---- 删除词条 ---- */
+        function shbotConfirmDeleteTag(tagName) {
+            if (!confirm("\u786e\u5b9a\u8981\u5220\u9664\u8bcd\u6761\u300c" + tagName + "\u300d\u53ca\u5176\u6240\u6709\u56fe\u7247\u5417\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u64a4\u9500\u3002")) return;
+            shbotDeleteTag(tagName);
+        }
+
+        async function shbotDeleteTag(tagName) {
+            try {
+                var resp = await fetch("/Shbot/api/images/" + encodeURIComponent(tagName) + "/delete-tag", {
+                    method: "POST",
+                    headers: {
+                        "Authorization": "Bearer " + shbotState._token(),
+                        "Content-Type": "application/json"
+                    }
+                });
+                var data = await resp.json();
+                if (data.success) {
+                    shbotShowToast("\u8bcd\u6761\u5df2\u5220\u9664", "success");
+                    shbotState.currentTag = null;
+                    document.getElementById("shbotMain").innerHTML = '<div class="shbot-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:64px;height:64px;opacity:0.3"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><p style="color:var(--tx-t);margin-top:12px">\u8bf7\u4ece\u5de6\u4fa7\u9009\u62e9\u4e00\u4e2a\u8bcd\u6761</p></div>';
+                    shbotRefreshTagList();
+                } else {
+                    shbotShowToast(data.error || "\u5220\u9664\u5931\u8d25", "error");
+                }
+            } catch(e) {
+                shbotShowToast("\u5220\u9664\u5931\u8d25: " + e.message, "error");
+            }
+        }
+
+        /* ---- 弹窗 ---- */
+        function shbotShowAddTagModal() {
+            document.getElementById("shbotModalOverlay").style.display = "flex";
+            document.getElementById("shbotNewTagName").value = "";
+            document.getElementById("shbotModalError").style.display = "none";
+            document.getElementById("shbotNewTagName").focus();
+        }
+
+        function shbotCloseModal() {
+            document.getElementById("shbotModalOverlay").style.display = "none";
+        }
+
+        function shbotConfirmAddTag() {
+            var name = document.getElementById("shbotNewTagName").value.trim();
+            if (!name) {
+                shbotShowModalError("\u8bcd\u6761\u540d\u79f0\u4e0d\u80fd\u4e3a\u7a7a");
+                return;
+            }
+            var exists = shbotState.tags.some(function(t) { return t.name === name; });
+            if (exists) {
+                shbotShowModalError("\u8bcd\u6761\u300c" + name + "\u300d\u5df2\u5b58\u5728");
+                return;
+            }
+            shbotCloseModal();
+            shbotState.currentTag = name;
+            shbotRefreshTagList();
+            shbotShowToast("\u65b0\u5efa\u8bcd\u6761\u300c" + name + "\u300d", "success");
+            setTimeout(function() {
+                var items = document.querySelectorAll(".shbot-tag-item");
+                items.forEach(function(el) {
+                    if (el.getAttribute("data-tagname") === name) {
+                        shbotSelectTag(name, el);
+                    }
+                });
+            }, 300);
+        }
+
+        function shbotShowModalError(msg) {
+            var el = document.getElementById("shbotModalError");
+            el.textContent = msg;
+            el.style.display = "block";
+        }
+
+        /* ---- Toast ---- */
+        function shbotShowToast(msg, type) {
+            var existing = document.querySelector(".shbot-toast");
+            if (existing) existing.remove();
+            var toast = document.createElement("div");
+            toast.className = "shbot-toast shbot-toast-" + (type || "success");
+            toast.textContent = msg;
+            document.body.appendChild(toast);
+            setTimeout(function() { toast.remove(); }, 2500);
+        }
+
+        /* ---- 工具函数 ---- */
+        function shbotEscHtml(str) {
+            if (!str) return "";
+            return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+        }
+
+        function shbotEscAttr(str) {
+            if (!str) return "";
+            return String(str).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+        }
+
+        /* ---- 等待 DOM 就绪后初始化 ---- */
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", shbotInit);
+        } else {
+            shbotInit();
+        }
+        </script>
         '''
 
     def _get_view_css(self) -> str:
@@ -573,259 +869,5 @@ class Main(BaseModule):
         '''
 
     def _get_view_js(self) -> str:
-        """返回 Dashboard 视窗的 JavaScript 逻辑"""
-        return '''
-        var shbotState = { tags: [], currentTag: null, filteredTags: [] };
-
-        function loadShbotView() { refreshTagList(); }
-
-        async function refreshTagList() {
-            try {
-                var resp = await fetch("/Shbot/api/images", {
-                    headers: { "Authorization": "Bearer " + localStorage.getItem("__ep_tk__") }
-                });
-                var data = await resp.json();
-                shbotState.tags = data.tags || [];
-                shbotState.filteredTags = shbotState.tags;
-                renderTagList();
-            } catch(e) {
-                console.error("Failed to load tags", e);
-            }
-        }
-
-        function renderTagList() {
-            var el = document.getElementById("shbotTagList");
-            var list = shbotState.filteredTags;
-            if (!list || list.length === 0) {
-                el.innerHTML = '<div class="shbot-loading">暂无词条</div>';
-                return;
-            }
-            el.innerHTML = list.map(function(t) {
-                var active = shbotState.currentTag === t.name ? " active" : "";
-                return '<div class="shbot-tag-item' + active + '" onclick="selectTag(\'' + escTag(t.name) + '\', this)">' +
-                    '<span class="shbot-tag-name">' + escHtml(t.name) + '</span>' +
-                    '<span class="shbot-tag-count">' + t.valid + "/" + t.total + "</span>" +
-                    "</div>";
-            }).join("");
-        }
-
-        function filterTags(query) {
-            if (!query) {
-                shbotState.filteredTags = shbotState.tags;
-            } else {
-                var q = query.toLowerCase();
-                shbotState.filteredTags = shbotState.tags.filter(function(t) {
-                    return t.name.toLowerCase().indexOf(q) !== -1;
-                });
-            }
-            renderTagList();
-        }
-
-        function selectTag(tagName, el) {
-            document.querySelectorAll(".shbot-tag-item").forEach(function(e) { e.classList.remove("active"); });
-            if (el) el.classList.add("active");
-            shbotState.currentTag = tagName;
-            loadTagImages(tagName);
-        }
-
-        async function loadTagImages(tagName) {
-            var main = document.getElementById("shbotMain");
-            main.innerHTML = '<div class="shbot-tag-detail" id="shbotTagDetail"></div>';
-            var detail = document.getElementById("shbotTagDetail");
-
-            try {
-                var resp = await fetch("/Shbot/api/images/" + encodeURIComponent(tagName), {
-                    headers: { "Authorization": "Bearer " + localStorage.getItem("__ep_tk__") }
-                });
-                var data = await resp.json();
-
-                var images = data.images || [];
-                var headerHtml = '<div class="shbot-tag-detail-header">' +
-                    '<span class="shbot-tag-detail-title">' + escHtml(tagName) + ' (' + images.length + ' 张)</span>' +
-                    '<div class="shbot-tag-detail-actions">' +
-                    '<button class="btn btn-danger btn-sm" onclick="confirmDeleteTag(\'' + escTag(tagName) + '\')">删除词条</button>' +
-                    '</div></div>';
-
-                var gridHtml = '<div class="shbot-image-grid" id="shbotImageGrid">';
-                if (images.length === 0) {
-                    gridHtml += '<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--tx-t)">暂无图片</div>';
-                } else {
-                    images.forEach(function(img) {
-                        gridHtml += '<div class="shbot-image-card">';
-                        if (img.exists && img.url) {
-                            gridHtml += '<img src="' + img.url + '" alt="' + escHtml(img.filename) + '" loading="lazy" />';
-                        } else {
-                            gridHtml += '<div style="height:140px;display:flex;align-items:center;justify-content:center;color:var(--er-c);font-size:12px">文件已丢失</div>';
-                        }
-                        gridHtml += '<button class="shbot-image-delete" onclick="deleteImage(' + img.index + ')" title="删除">' +
-                            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>' +
-                            "</button>";
-                        gridHtml += '<div class="shbot-image-info">';
-                        gridHtml += '<span class="shbot-image-time">' + (img.time ? new Date(img.time * 1000).toLocaleString() : "") + "</span>";
-                        gridHtml += "</div></div>";
-                    });
-                }
-                gridHtml += "</div>";
-
-                var uploadHtml = '<div class="shbot-upload-area">' +
-                    '<label class="shbot-upload-btn" id="shbotUploadBtn">' +
-                    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>' +
-                    '上传图片' +
-                    '<input type="file" accept="image/*" onchange="uploadImage(this, \'' + escTag(tagName) + '\')" />' +
-                    '</label>' +
-                    '</div>';
-
-                detail.innerHTML = headerHtml + gridHtml + uploadHtml;
-            } catch(e) {
-                detail.innerHTML = '<div class="shbot-empty"><p style="color:var(--er-c)">加载失败: ' + e.message + "</p></div>";
-            }
-        }
-
-        async function uploadImage(input, tagName) {
-            var file = input.files[0];
-            if (!file) return;
-
-            var formData = new FormData();
-            formData.append("file", file);
-
-            try {
-                var resp = await fetch("/Shbot/api/images/" + encodeURIComponent(tagName), {
-                    method: "POST",
-                    headers: { "Authorization": "Bearer " + localStorage.getItem("__ep_tk__") },
-                    body: formData
-                });
-                var data = await resp.json();
-                if (data.success) {
-                    showToast("上传成功", "success");
-                    input.value = "";
-                    loadTagImages(tagName);
-                    refreshTagList();
-                } else {
-                    showToast(data.error || "上传失败", "error");
-                }
-            } catch(e) {
-                showToast("上传失败: " + e.message, "error");
-            }
-        }
-
-        async function deleteImage(index) {
-            if (!shbotState.currentTag) return;
-            if (!confirm("确定要删除这张图片吗？")) return;
-
-            try {
-                var resp = await fetch("/Shbot/api/images/" + encodeURIComponent(shbotState.currentTag) + "/delete", {
-                    method: "POST",
-                    headers: {
-                        "Authorization": "Bearer " + localStorage.getItem("__ep_tk__"),
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({ index: index })
-                });
-                var data = await resp.json();
-                if (data.success) {
-                    showToast("删除成功", "success");
-                    loadTagImages(shbotState.currentTag);
-                    refreshTagList();
-                } else {
-                    showToast(data.error || "删除失败", "error");
-                }
-            } catch(e) {
-                showToast("删除失败: " + e.message, "error");
-            }
-        }
-
-        function confirmDeleteTag(tagName) {
-            if (!confirm("确定要删除词条「" + tagName + "」及其所有图片吗？此操作不可撤销。")) return;
-            deleteTag(tagName);
-        }
-
-        async function deleteTag(tagName) {
-            try {
-                var resp = await fetch("/Shbot/api/images/" + encodeURIComponent(tagName) + "/delete-tag", {
-                    method: "POST",
-                    headers: {
-                        "Authorization": "Bearer " + localStorage.getItem("__ep_tk__"),
-                        "Content-Type": "application/json"
-                    }
-                });
-                var data = await resp.json();
-                if (data.success) {
-                    showToast("词条已删除", "success");
-                    shbotState.currentTag = null;
-                    document.getElementById("shbotMain").innerHTML = '<div class="shbot-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:64px;height:64px;opacity:0.3"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg><p style="color:var(--tx-t);margin-top:12px">请从左侧选择一个词条</p></div>';
-                    refreshTagList();
-                } else {
-                    showToast(data.error || "删除失败", "error");
-                }
-            } catch(e) {
-                showToast("删除失败: " + e.message, "error");
-            }
-        }
-
-        function showAddTagModal() {
-            document.getElementById("shbotModalOverlay").style.display = "flex";
-            document.getElementById("shbotNewTagName").value = "";
-            document.getElementById("shbotModalError").style.display = "none";
-            document.getElementById("shbotNewTagName").focus();
-        }
-
-        function closeModal() {
-            document.getElementById("shbotModalOverlay").style.display = "none";
-        }
-
-        function confirmAddTag() {
-            var name = document.getElementById("shbotNewTagName").value.trim();
-            if (!name) {
-                showError("词条名称不能为空");
-                return;
-            }
-            // 检查是否已存在
-            var exists = shbotState.tags.some(function(t) { return t.name === name; });
-            if (exists) {
-                showError("词条「" + name + "」已存在");
-                return;
-            }
-            closeModal();
-            // 直接选中新建的词条（空词条会在选择时自动创建）
-            shbotState.currentTag = name;
-            // 刷新列表后选中
-            refreshTagList();
-            showToast("新建词条「" + name + "」", "success");
-            // 选中它
-            setTimeout(function() {
-                var items = document.querySelectorAll(".shbot-tag-item");
-                items.forEach(function(el) {
-                    var nameEl = el.querySelector(".shbot-tag-name");
-                    if (nameEl && nameEl.textContent === name) {
-                        selectTag(name, el);
-                    }
-                });
-            }, 300);
-        }
-
-        function showError(msg) {
-            var el = document.getElementById("shbotModalError");
-            el.textContent = msg;
-            el.style.display = "block";
-        }
-
-        function showToast(msg, type) {
-            var existing = document.querySelector(".shbot-toast");
-            if (existing) existing.remove();
-            var toast = document.createElement("div");
-            toast.className = "shbot-toast shbot-toast-" + (type || "success");
-            toast.textContent = msg;
-            document.body.appendChild(toast);
-            setTimeout(function() { toast.remove(); }, 2500);
-        }
-
-        function escHtml(str) {
-            if (!str) return "";
-            return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-        }
-
-        function escTag(str) {
-            if (!str) return "";
-            return String(str).replace(/'/g,"\\\\'").replace(/"/g,"&quot;");
-        }
-        '''
+        """JS 已内联到 HTML 中"""
+        return ""
