@@ -1,0 +1,14 @@
+[project]
+name = "shbot"
+version = "1.0.0"
+description = "QQ Bot with image storage functionality"
+requires-python = ">=3.10"
+dependencies = [
+    "ErisPulse"
+]
+
+[tool.setuptools.packages.find]
+include = ["shbot*"]
+
+[project.entry-points."erispulse.module"]
+"Shbot" = "shbot:Main"

@@ -1,0 +1,7 @@
+zh-CN/
+__pycache__/
+*.pyc
+*.pyo
+.env
+dist/
+*.egg-info/

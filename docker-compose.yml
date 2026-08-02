@@ -1,0 +1,12 @@
+services:
+  shbot:
+    build: .
+    container_name: shbot
+    ports:
+      - "${SHBOT_PORT:-8000}:8000"
+    volumes:
+      - ./config:/app/config
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - ERISPULSE_DASHBOARD_TOKEN=${ERISPULSE_DASHBOARD_TOKEN:-}
+    restart: unless-stopped
