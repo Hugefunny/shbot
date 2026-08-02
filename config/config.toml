@@ -1,0 +1,21 @@
+[ErisPulse.server]
+host = "0.0.0.0"
+port = 8000
+
+[ErisPulse.logger]
+level = "INFO"
+
+[ErisPulse.event.command]
+prefix = "/"
+case_sensitive = false
+
+# QQ 适配器配置 (OneBot12)
+# 请根据你使用的 OneBot12 实现 (如 Lagrange, go-cqhttp 等) 修改配置
+[QQ_Adapter]
+status = true
+# WebSocket 连接地址
+ws_host = "127.0.0.1"
+ws_port = 8080
+# 如果使用反向 WebSocket，配置如下:
+# ws_reverse = true
+# ws_reverse_url = "ws://127.0.0.1:8080"

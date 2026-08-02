@@ -1,0 +1,22 @@
+# ===========================================================================
+# 图片词条机器人 - Docker Compose
+# 使用方式:
+#   docker compose up -d
+# ===========================================================================
+services:
+  shbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shbot
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ./config:/app/config
+      - ./images:/app/images
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - LANG=${LANG:-zh_CN.UTF-8}
+      - ERISPULSE_LANG=${ERISPULSE_LANG:-zh}
+      - ERISPULSE_DASHBOARD_TOKEN=${ERISPULSE_DASHBOARD_TOKEN:-}
+    restart: unless-stopped

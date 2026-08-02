@@ -1,0 +1,20 @@
+[project]
+name = "shbot"
+version = "1.0.0"
+description = "图片词条机器人 - 存图/删图/取图 ErisPulse 模块"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Hugefunny", email = "hugef@example.com" }
+]
+dependencies = []
+
+[project.urls]
+homepage = "https://github.com/Hugefunny/shbot"
+
+[project.entry-points."erispulse.module"]
+"shbot" = "shbot:Main"
+
+[tool.setuptools.packages.find]
+include = ["shbot*"]
