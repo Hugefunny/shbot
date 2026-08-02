@@ -5,3 +5,5 @@
 **存图** 有人问xx时回答<br>
 **删图** 不要回答xx<br>
 **roll图** xx(直接回答关键词即可)<br><br>
+
+感谢[Wsu](https://https://github.com/wsu2059q)的大力协助，爱你
