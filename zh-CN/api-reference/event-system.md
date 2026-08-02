@@ -1,0 +1,665 @@
+# 事件系统 API
+
+本文档详细介绍了 ErisPulse 事件系统的 API。
+
+## Command 命令模块
+
+### 注册命令
+
+```python
+from ErisPulse.Core.Event import command
+
+# 基本命令
+@command("hello", help="发送问候")
+async def hello_handler(event):
+    await event.reply("你好！")
+
+# 带别名的命令
+@command(["help", "h"], aliases=["帮助"], help="显示帮助")
+async def help_handler(event):
+    pass
+
+# 带权限的命令
+def is_admin(event):
+    return event.get("user_id") in admin_ids
+
+@command("admin", permission=is_admin, help="管理员命令")
+async def admin_handler(event):
+    pass
+
+# 隐藏命令
+@command("secret", hidden=True, help="秘密命令")
+async def secret_handler(event):
+    pass
+
+# 命令组
+@command("admin.reload", group="admin", help="重新加载模块")
+async def reload_handler(event):
+    pass
+```
+
+### 命令信息
+
+```python
+# 获取命令帮助
+help_text = command.help()
+
+# 获取特定命令
+cmd_info = command.get_command("admin")
+
+# 获取命令组中的所有命令
+admin_commands = command.get_group_commands("admin")
+
+# 获取所有可见命令
+visible_commands = command.get_visible_commands()
+```
+
+### 等待回复
+
+```python
+# 等待用户回复
+@command("ask", help="询问用户信息")
+async def ask_command(event):
+    reply = await command.wait_reply(
+        event,
+        prompt="请输入你的名字:",  # 已在上面发送
+        timeout=30.0
+    )
+    
+    if reply:
+        name = reply.get_text()
+        await event.reply(f"你好，{name}！")
+
+# 带验证的等待回复
+def validate_age(event_data):
+    try:
+        age = int(event_data.get_text())
+        return 0 <= age <= 150
+    except ValueError:
+        return False
+
+@command("age", help="询问用户年龄")
+async def age_command(event):
+    await event.reply("请输入你的年龄:")
+    
+    reply = await command.wait_reply(
+        event,
+        timeout=60,
+        validator=validate_age
+    )
+    
+    if reply:
+        age = int(reply.get_text())
+        await event.reply(f"你的年龄是 {age} 岁")
+
+# 带回调的等待回复
+async def handle_confirmation(reply_event):
+    text = reply_event.get_text().lower()
+    if text in ["是", "yes", "y"]:
+        await event.reply("操作已确认！")
+    else:
+        await event.reply("操作已取消。")
+
+@command("confirm", help="确认操作")
+async def confirm_command(event):
+    await command.wait_reply(
+        event,
+        prompt="请输入'是'或'否':",
+        callback=handle_confirmation
+    )
+```
+
+## Message 消息模块
+
+### 消息事件
+
+```python
+from ErisPulse.Core.Event import message
+
+# 监听所有消息
+@message.on_message()
+async def message_handler(event):
+    sdk.logger.info(f"收到消息: {event.get_text()}")
+
+# 监听私聊消息
+@message.on_private_message()
+async def private_handler(event):
+    user_id = event.get_user_id()
+    sdk.logger.info(f"私聊来自: {user_id}")
+
+# 监听群聊消息
+@message.on_group_message()
+async def group_handler(event):
+    group_id = event.get_group_id()
+    sdk.logger.info(f"群聊来自: {group_id}")
+
+# 监听@消息
+@message.on_at_message()
+async def at_handler(event):
+    mentions = event.get_mentions()
+    sdk.logger.info(f"被@的用户: {mentions}")
+```
+
+### 条件监听
+
+```python
+# 使用优先级控制执行顺序
+@message.on_message(priority=10)  # 数值越大优先级越高
+async def high_priority_handler(event):
+    pass
+
+# 在处理器内部实现条件过滤
+@message.on_message()
+async def filtered_handler(event):
+    if "关键词" not in event.get_text():
+        return
+    # 处理包含关键词的消息
+    pass
+```
+
+## Notice 通知模块
+
+### 通知事件
+
+```python
+from ErisPulse.Core.Event import notice
+
+# 好友添加
+@notice.on_friend_add()
+async def friend_add_handler(event):
+    user_id = event.get_user_id()
+    await event.reply("欢迎添加我为好友！")
+
+# 好友删除
+@notice.on_friend_remove()
+async def friend_remove_handler(event):
+    user_id = event.get_user_id()
+    sdk.logger.info(f"好友删除: {user_id}")
+
+# 群成员增加
+@notice.on_group_increase()
+async def member_increase_handler(event):
+    user_id = event.get_user_id()
+    await event.reply(f"欢迎新成员！")
+
+# 群成员减少
+@notice.on_group_decrease()
+async def member_decrease_handler(event):
+    user_id = event.get_user_id()
+    sdk.logger.info(f"群成员离开: {user_id}")
+```
+
+## Request 请求模块
+
+### 请求事件
+
+```python
+from ErisPulse.Core.Event import request
+
+# 好友请求
+@request.on_friend_request()
+async def friend_request_handler(event):
+    user_id = event.get_user_id()
+    comment = event.get_comment()
+    sdk.logger.info(f"好友请求: {user_id}, 备注: {comment}")
+
+# 群邀请请求
+@request.on_group_request()
+async def group_request_handler(event):
+    group_id = event.get_group_id()
+    user_id = event.get_user_id()
+    sdk.logger.info(f"群邀请: {group_id}, 来自: {user_id}")
+```
+
+## Meta 元事件模块
+
+### 元事件
+
+```python
+from ErisPulse.Core.Event import meta
+
+# 连接事件
+@meta.on_connect()
+async def connect_handler(event):
+    platform = event.get_platform()
+    sdk.logger.info(f"平台 {platform} 连接成功")
+
+# 断开连接事件
+@meta.on_disconnect()
+async def disconnect_handler(event):
+    platform = event.get_platform()
+    sdk.logger.info(f"平台 {platform} 断开连接")
+
+# 心跳事件
+@meta.on_heartbeat()
+async def heartbeat_handler(event):
+    sdk.logger.debug("收到心跳")
+```
+
+### Bot 状态查询
+
+当适配器发送 meta 事件后，框架会自动追踪 Bot 状态。查询 API 和生命周期事件监听请参考 [适配器系统 API - Bot 状态管理](adapter-system.md#bot-状态管理)。
+
+## Event 包装类
+
+Event 模块的事件处理器接收一个 Event 包装类实例，它继承自 dict 并提供了便捷方法。
+
+### 核心方法
+
+```python
+# 获取事件信息
+event_id = event.get_id()
+event_time = event.get_time()
+event_type = event.get_type()
+detail_type = event.get_detail_type()
+platform = event.get_platform()
+
+# 获取机器人信息
+self_platform = event.get_self_platform()
+self_user_id = event.get_self_user_id()
+self_info = event.get_self_info()
+```
+
+### 会话标识
+
+```python
+# 统一目标 ID：群聊返回 group_id，私聊返回 user_id，以此类推
+target_id = event.get_target_id()
+
+# 会话唯一标识，格式: {platform}:{detail_type}:{target_id}
+session_id = event.get_session_id()
+# 示例: "telegram:private:12345"、"qq:group:67890"
+```
+
+`get_target_id()` 按以下顺序返回首个非空值：`group_id` → `channel_id` → `guild_id` → `thread_id` → `user_id`。适用于上下文管理、状态存储等需要统一标识会话的场景。
+
+### 消息方法
+
+```python
+# 获取消息内容
+message_segments = event.get_message()
+alt_message = event.get_alt_message()
+text = event.get_text()
+
+# 获取发送者信息
+user_id = event.get_user_id()
+nickname = event.get_user_nickname()
+sender = event.get_sender()
+
+# 获取群组信息
+group_id = event.get_group_id()
+
+# 判断消息类型
+is_msg = event.is_message()
+is_private = event.is_private_message()
+is_group = event.is_group_message()
+
+# @消息相关
+is_at = event.is_at_message()
+has_mention = event.has_mention()
+mentions = event.get_mentions()
+```
+
+### 命令信息
+
+```python
+# 获取命令信息
+cmd_name = event.get_command_name()
+cmd_args = event.get_command_args()
+cmd_raw = event.get_command_raw()
+
+# 判断是否为命令
+is_cmd = event.is_command()
+```
+
+### 回复功能
+
+```python
+# 基本回复
+await event.reply("这是一条消息")
+
+# 指定发送方法
+await event.reply("http://example.com/image.jpg", method="Image")
+
+# 带 @用户 和回复消息
+await event.reply("你好", at_users=["user1"], reply_to="msg_id")
+
+# @全体成员
+await event.reply("公告", at_all=True)
+
+# 使用平台专有修饰方法（via 参数）
+await event.reply("看板内容", method="Board",
+                  via=[("Expire", 3600), ("ForMember", "114514")])
+
+# 获取发送链，自由追加修饰方法和发送方法（适合连续多个修饰 / 动作型方法）
+await event.send_chain().Expire(3600).Board("看板内容")
+await event.send_chain().DismissBoard()
+
+# 使用 OneBot12 消息段回复
+from ErisPulse.Core.Event import MessageBuilder
+msg = MessageBuilder().text("Hello").image("url").build()
+await event.reply_ob12(msg)
+
+# 等待回复
+reply = await event.wait_reply(timeout=30)
+```
+
+### 平台能力查询
+
+```python
+# 检查当前平台是否支持某种发送方法
+if event.supports("Image"):
+    await event.reply(url, method="Image")
+
+# 列出当前平台所有可用发送方法
+methods = event.available_methods()
+# ["Text", "Image", "Voice", ...]
+```
+
+### 回复方法
+
+`reply()` 方法支持通过 `method` 参数指定发送类型，以及两个便捷的布尔参数：
+
+```python
+# 简单文本回复
+await event.reply("你好")
+
+# 回复并@发送者
+await event.reply("你好", at_sender=True)
+
+# 回复并引用当前消息
+await event.reply("收到", reply_to_message=True)
+
+# 组合使用
+await event.reply("收到", at_sender=True, reply_to_message=True)
+
+# 发送图片（使用 method 参数）
+if event.supports("Image"):
+    await event.reply("http://example.com/img.jpg", method="Image")
+else:
+    await event.reply("[图片] http://example.com/img.jpg")
+```
+
+**参数说明**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `content` | str | 发送内容 |
+| `method` | str | 发送方法，默认 "Text"，可选 "Image"/"Voice"/"Video"/"File" 等 |
+| `at_sender` | bool | 是否@发送者（自动提取 user_id） |
+| `quote` | bool | 是否引用回复当前消息（自动提取 message_id） |
+| `at_users` | list[str] | @指定用户列表 |
+| `reply_to` | str | 手动指定回复的消息 ID |
+| `at_all` | bool | 是否@全体成员 |
+
+### 交互方法
+
+```python
+# confirm — 确认对话（返回 True/False/None）
+if await event.confirm("确定要执行此操作吗？"):
+    await event.reply("已确认")
+
+# 使用非 Text 方式发送确认提示
+if await event.confirm("http://example.com/image.jpg", method="Image"):
+    await event.reply("已确认图片提示")
+
+# choose — 选择菜单（返回选项索引或 None）
+choice = await event.choose("请选择颜色：", ["红色", "绿色", "蓝色"])
+
+# options_format="auto"（默认）根据 method 自动选择样式：
+# Markdown→无序列表（- 1.选项），Html→有序列表（<ol>），其他→纯文本列表
+# 文本类方法（Markdown/Html 等）默认合并选项到末尾
+# merge_prompt=True 可强制任意 method 合并；placeholder 可自定义占位符
+choice = await event.choose(
+    "## 请选择\n{options}", ["A", "B"],
+    method="Markdown", merge_prompt=True,
+)
+
+# collect — 表单收集（返回 {key: value} 字典或 None）
+data = await event.collect([
+    {"key": "name", "prompt": "请输入姓名："},
+    {"key": "age", "prompt": "请输入年龄：",
+     "validator": lambda e: e.get_text().isdigit()},
+    {"key": "avatar", "prompt": "请发送头像：", "method": "Image"},
+])
+
+# wait_for — 等待满足条件的任意事件
+evt = await event.wait_for(event_type="notice", condition=lambda e: ..., timeout=120)
+
+# conversation — 多轮对话上下文
+conv = event.conversation(timeout=60)
+await conv.say("欢迎！")
+```
+
+> 完整的交互方法参数说明和更多示例请参考 [Event 包装类详解](../developer-guide/modules/event-wrapper.md) 和 [Conversation 多轮对话](../advanced/conversation.md)。
+
+### 工具方法
+
+```python
+# 转换为字典
+event_dict = event.to_dict()
+
+# 检查是否已处理
+if not event.is_processed():
+    event.mark_processed()
+
+# 获取原始数据
+raw = event.get_raw()
+raw_type = event.get_raw_type()
+```
+
+### 平台扩展方法
+
+适配器可以为 Event 注册平台专有方法，仅在对应平台的实例上可用。
+
+#### 用户：使用平台扩展方法
+
+当适配器注册了平台专有方法后，你可以在事件处理器中直接调用。各平台的方法不同，请参阅对应的 [平台文档](../platform-guide/)。
+
+```python
+from ErisPulse.Core.Event import message
+
+@message.on_message()
+async def handle_message(event):
+    platform = event.get_platform()
+
+    # 根据平台调用专有方法
+    if platform == "email":
+        subject = event.get_subject()           # 邮件专有
+        attachments = event.get_attachments()   # 邮件专有
+```
+
+#### 查询平台已注册方法
+
+```python
+from ErisPulse.Core.Event import get_platform_event_methods
+
+# 查看某平台注册了哪些方法
+methods = get_platform_event_methods("email")
+# ["get_subject", "get_from", "get_attachments", ...]
+
+# 动态判断并调用
+for method_name in get_platform_event_methods(event.get_platform()):
+    method = getattr(event, method_name)
+    print(f"{method_name}: {method()}")
+```
+
+#### 平台方法隔离
+
+不同平台注册的方法互不干扰：
+
+```python
+# 邮件事件 - 只有邮件方法
+event = Event({"platform": "email", "email_raw": {"subject": "Hello"}})
+event.get_subject()      # ✅ "Hello"
+event.get_chat_type()    # ❌ AttributeError
+
+# Telegram 事件 - 只有 Telegram 方法
+event = Event({"platform": "telegram", "telegram_raw": {"chat": {"type": "private"}}})
+event.get_chat_type()    # ✅ "private"
+event.get_subject()      # ❌ AttributeError
+```
+
+#### `hasattr` / `dir` 支持
+
+```python
+hasattr(event, "get_subject")   # 仅当 platform="email" 时返回 True
+"get_subject" in dir(event)     # 同上
+```
+
+### 适配器：注册平台扩展方法
+
+适配器可以通过装饰器为 Event 注册平台专有方法，方法的第一个参数为 `self`（Event 实例），可以自由访问事件数据。
+
+#### 单个方法注册
+
+```python
+from ErisPulse.Core.Event import register_event_method
+
+@register_event_method("email")
+def get_subject(self):
+    """获取邮件主题"""
+    return self.get("email_raw", {}).get("subject", "")
+
+@register_event_method("email")
+def get_from(self):
+    """获取发件人"""
+    return self.get("email_raw", {}).get("from", {})
+```
+
+#### 批量注册（Mixin 类）
+
+当方法较多时，推荐使用 Mixin 类批量注册：
+
+```python
+from ErisPulse.Core.Event import register_event_mixin
+
+class EmailEventMixin:
+    def get_subject(self):
+        return self.get("email_raw", {}).get("subject", "")
+
+    def get_from(self):
+        return self.get("email_raw", {}).get("from", {})
+
+    def get_attachments(self):
+        return self.get("email_raw", {}).get("attachments", [])
+
+# 一次性注册所有方法
+register_event_mixin("email", EmailEventMixin)
+```
+
+#### 返回值规范
+
+| 场景 | 返回值 | 用户使用方式 |
+|------|--------|------------|
+| 返回数据（文本、字典等） | 直接返回值 | `subject = event.get_subject()` |
+| 执行操作（发送消息等） | 返回 `asyncio.Task` | `task = event.do_something()` 可选 `await` |
+
+> **建议**：非数据返回的方法返回 `asyncio.Task`，这样用户可以自行决定是否 `await`，即使不 `await` 操作也会执行完成。
+
+```python
+@register_event_method("email")
+def forward_email(self, to_address: str):
+    """转发邮件 — 返回 Task，用户可自行决定是否 await"""
+    import asyncio
+    return asyncio.create_task(
+        self._do_forward(to_address)
+    )
+
+# 用户可以 await 等待结果
+await event.forward_email("user@example.com")
+
+# 也可以不 await，操作在后台执行
+event.forward_email("user@example.com")
+```
+
+#### 注销方法
+
+```python
+from ErisPulse.Core.Event import unregister_event_method, unregister_platform_event_methods
+
+# 注销单个方法
+unregister_event_method("email", "get_subject")
+
+# 注销某平台全部方法（适配器 shutdown 时调用）
+unregister_platform_event_methods("email")
+```
+
+#### 覆写内置方法
+
+`register_event_mixin` / `register_event_method` 支持覆写 Event 内置方法（如 `confirm`、`choose`、`collect`、`wait_reply`、`reply` 等）。注册的平台方法通过 `Event.__getattribute__` 优先于内置方法生效，因此适配器可以提供平台特色的交互实现。
+
+内置实现作为 `_builtin_*` 函数导出，覆写方可以调用它们作为回退：
+
+```python
+from ErisPulse.Core.Event import register_event_mixin, _builtin_choose
+
+class YunhuEventMixin:
+    async def choose(self, prompt, options, timeout=60, method="Text"):
+        # 云湖平台使用按钮组件
+        buttons = [[{"text": opt} for opt in options]]
+        await self.reply(prompt)
+        # ...等待按钮回调或文本回复...
+        # 回退到内置逻辑
+        return await _builtin_choose(self, None, options, timeout, "Text")
+
+register_event_mixin("yunhu", YunhuEventMixin)
+```
+
+## 跨平台扩展（通配符）
+
+`register_event_method` 和 `register_event_mixin` 支持传 `"*"` 作为平台名，注册的方法在**所有平台**的 Event 实例上都可用。适合 AI 对话、上下文管理等需要跨平台复用的功能模块。
+
+### 注册跨平台方法
+
+```python
+from ErisPulse.Core.Event.wrapper import register_event_method
+
+@register_event_method("*")
+async def ai_chat(self, prompt: str):
+    """self 为 Event 实例，可自由访问事件数据和内置方法"""
+    await self.reply(f"AI: {prompt}")
+```
+
+注册后，所有平台的事件处理器都能调用：
+
+```python
+from ErisPulse.Core.Event import message
+
+@message.on_message()
+async def handler(event):
+    await event.ai_chat(event.get_text())
+```
+
+### 方法解析优先级
+
+通过属性访问 Event 方法时，解析顺序为：
+
+1. **平台特定方法**（当前平台的覆写）
+2. **通配符方法**（`"*"` 注册的跨平台方法）
+3. **内置方法**（`reply`、`confirm` 等）
+4. **字典键访问**
+
+> 因此通配符方法可以覆写内置方法（如 `reply`），但会被同名的平台特定方法进一步覆写。
+
+## 优先级系统
+
+事件处理器支持优先级，数值越大优先级越高：
+
+```python
+# 高优先级处理器先执行
+@message.on_message(priority=10)
+async def high_priority_handler(event):
+    pass
+
+# 低优先级处理器后执行
+@message.on_message(priority=0)
+async def low_priority_handler(event):
+    pass
+```
+
+## 相关文档
+
+- [核心模块 API](core-modules.md) - 核心模块 API
+- [适配器系统 API](adapter-system.md) - Adapter 管理 API
+- [模块开发指南](../developer-guide/modules/) - 开发自定义模块

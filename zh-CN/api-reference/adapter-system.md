@@ -1,0 +1,433 @@
+# 适配器系统 API
+
+本文档详细介绍了 ErisPulse 适配器系统的 API。
+
+## Adapter 管理器
+
+### 获取适配器
+
+```python
+from ErisPulse import sdk
+
+# 通过名称获取适配器
+adapter = sdk.adapter.get("platform_name")
+
+# 或者也可以直接通过属性访问
+adapter = sdk.adapter.platform_name
+```
+
+### 使用适配器事件监听
+> 一般情况下，更建议使用`Event`模块进行事件的监听/处理;
+>
+> 同时`Event`模块提供了强大的包装器，可以为您的模块开发带来更多便利
+
+```python
+# 监听 OneBot12 标准事件
+@sdk.adapter.on("message")
+async def handle_message(event):
+    pass
+
+# 监听特定平台的标准事件
+@sdk.adapter.on("message", platform="yunhu")
+async def handle_yunhu_message(event):
+    pass
+
+# 监听平台原生事件
+@sdk.adapter.on("raw_event", raw=True, platform="yunhu")
+async def handle_raw_event(data):
+    pass
+```
+
+### 适配器管理
+
+```python
+# 获取所有平台
+platforms = sdk.adapter.platforms
+
+# 检查适配器是否存在
+exists = sdk.adapter.exists("platform_name")
+
+# 启用/禁用适配器
+sdk.adapter.enable("platform_name")
+sdk.adapter.disable("platform_name")
+
+# 启动/关闭适配器
+# 以下方法都只展示了传入参数的情况，无参数时代表启动/停止全部已注册适配器
+await sdk.adapter.startup(["platform1", "platform2"])
+await sdk.adapter.shutdown(["platform1", "platform2"])
+
+# 检查适配器是否正在运行
+is_running = sdk.adapter.is_running("platform_name")
+
+# 列出所有正在运行的适配器
+running = sdk.adapter.list_running()
+```
+
+## 中间件
+
+中间件在事件分发到处理器之前执行，可以对事件数据进行修改、过滤或记录。
+
+### 注册中间件
+
+```python
+@sdk.adapter.middleware
+async def my_middleware(event):
+    sdk.logger.info(f"中间件处理: {event}")
+    return event
+```
+
+### 中间件执行模型
+
+- **执行顺序**：中间件按注册顺序执行（先注册先执行）
+- **数据传递**：每个中间件接收上一个中间件返回的 `event` 数据；如果某个中间件返回 `None`，则忽略该返回值并保留原数据继续传递（同时输出 `warning` 级别日志）
+- **修改数据**：中间件可以修改事件数据并返回修改后的字典
+
+```python
+@sdk.adapter.middleware
+async def add_timestamp(event):
+    event["processed_at"] = time.time()
+    return event
+
+@sdk.adapter.middleware
+async def filter_spam(event):
+    if event.get("detail_type") == "private":
+        text = event.get("alt_message", "")
+        if "垃圾广告" in text:
+            return None   # 返回 None 不会阻止事件传播，仅忽略此返回值
+    return event
+```
+
+> **注意**：中间件目前不支持阻断事件传播。如需过滤特定事件，请在事件处理器中通过条件判断实现。
+> 但您可以在Event模块中设置搞优先级处理器然后在处理器内使用设定 `event.mark_processed()` 来阻断低优先级事件处理器
+
+## Send 消息发送
+
+### 基本发送
+
+```python
+# 获取适配器
+adapter = sdk.adapter.get("platform")
+
+# 发送文本消息
+await adapter.Send.To("user", "123").Text("Hello")
+
+# 发送图片消息
+await adapter.Send.To("group", "456").Image("https://example.com/image.jpg")
+```
+
+### 指定发送账号
+
+```python
+# 使用账户名
+await adapter.Send.Using("account1").To("user", "123").Text("Hello")
+
+# 使用账户 ID
+await adapter.Send.Using("bot_id").To("user", "123").Text("Hello")
+```
+
+### 查询支持的发送方法
+
+```python
+# 列出平台支持的所有发送方法
+methods = sdk.adapter.list_sends("onebot11")
+# 返回: ["Text", "Image", "Voice", "Markdown", ...]
+
+# 获取某个方法的详细信息
+info = sdk.adapter.send_info("onebot11", "Text")
+# 返回:
+# {
+#     "name": "Text",
+#     "parameters": [
+#         {"name": "text", "type": "str", "default": null, "annotation": "str"}
+#     ],
+#     "return_type": "Awaitable[Any]",
+#     "docstring": "发送文本消息..."
+# }
+```
+
+### 链式修饰
+
+```python
+# @用户
+await adapter.Send.To("group", "456").At("789").Text("你好")
+
+# @全体成员
+await adapter.Send.To("group", "456").AtAll().Text("大家好")
+
+# 回复消息
+await adapter.Send.To("group", "456").Reply("msg_id").Text("回复内容")
+
+# 组合使用
+await adapter.Send.To("group", "456").At("789").Reply("msg_id").Text("回复@的消息")
+```
+
+## API 调用
+
+### call_api 方法
+
+> **注意**：`call_api` 是直接调用平台原生 API 的底层方法，各平台的参数和返回值可能不同，请参考对应平台适配器文档。**推荐使用 Send DSL 发送消息**，仅在 Send DSL 不支持的场景（如获取平台特有的数据、调用平台管理接口等）中使用 `call_api`。
+
+```python
+# 调用平台 API
+result = await adapter.call_api(
+    endpoint="/send",
+    content="Hello",
+    recvId="123",
+    recvType="user"
+)
+
+# 标准化响应
+{
+    "status": "ok",
+    "retcode": 0,
+    "data": {...},
+    "message_id": "msg_id",
+    "message": "",
+    "{platform}_raw": raw_response
+}
+```
+
+## 适配器基类
+
+### BaseAdapter 方法
+
+```python
+from ErisPulse import sdk
+from ErisPulse.Core import BaseAdapter
+
+class MyAdapter(BaseAdapter):
+    def __init__(self):
+        super().__init__()
+        self.sdk = sdk
+        # 初始化适配器
+        pass
+    
+    async def start(self):
+        """启动适配器（必须实现）"""
+        pass
+    
+    async def shutdown(self):
+        """关闭适配器（必须实现）"""
+        pass
+    
+    async def call_api(self, endpoint: str, **params):
+        """调用平台 API（必须实现）"""
+        pass
+```
+
+### Send 嵌套类
+
+```python
+class MyAdapter(BaseAdapter):
+    class Send(BaseAdapter.Send):
+        def Text(self, text: str):
+            """发送文本消息"""
+            import asyncio
+            return asyncio.create_task(
+                self._adapter.call_api(
+                    endpoint="/send",
+                    content=text,
+                    recvId=self._target_id,
+                    recvType=self._target_type
+                )
+            )
+```
+
+## Bot 状态管理
+
+适配器通过发送 OneBot12 标准的 **`meta` 事件**来告知框架 Bot 的连接状态。系统自动从中提取 Bot 信息进行状态追踪。
+
+### meta 事件类型
+
+适配器应发送以下三种 `meta` 事件：
+
+| `type` | `detail_type` | 说明 | 触发时机 |
+|--------|--------------|------|---------|
+| `meta` | `connect` | Bot 连接上线 | 适配器与平台建立连接成功后 |
+| `meta` | `heartbeat` | Bot 心跳 | 定期发送（建议 30-60 秒） |
+| `meta` | `disconnect` | Bot 断开连接 | 检测到连接断开时 |
+
+### self 字段扩展
+
+ErisPulse 在 OneBot12 标准的 `self` 字段上扩展了以下可选字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `self.platform` | string | 平台名称（OB12 标准） |
+| `self.user_id` | string | Bot 用户 ID（OB12 标准） |
+| `self.user_name` | string | Bot 昵称（ErisPulse 扩展） |
+| `self.avatar` | string | Bot 头像 URL（ErisPulse 扩展） |
+| `self.account_id` | string | 多账户标识（ErisPulse 扩展） |
+
+### meta 事件格式
+
+#### connect — 连接上线
+
+```python
+await adapter.emit({
+    "id": "unique_id",
+    "time": 1712345678,
+    "type": "meta",
+    "detail_type": "connect",
+    "platform": "telegram",
+    "self": {
+        "platform": "telegram",
+        "user_id": "123456",
+        "user_name": "MyBot",
+        "avatar": "https://example.com/avatar.jpg"
+    },
+    "telegram_raw": {...},
+    "telegram_raw_type": "bot_connected"
+})
+```
+
+系统处理：注册 Bot，标记为 `online`，触发 `adapter.bot.online` 生命周期事件。
+
+#### heartbeat — 心跳
+
+```python
+await adapter.emit({
+    "id": "unique_id",
+    "time": 1712345708,
+    "type": "meta",
+    "detail_type": "heartbeat",
+    "platform": "telegram",
+    "self": {
+        "platform": "telegram",
+        "user_id": "123456"
+    }
+})
+```
+
+系统处理：更新 `last_active` 时间（心跳中也支持更新元信息）。
+
+#### disconnect — 断开连接
+
+```python
+await adapter.emit({
+    "id": "unique_id",
+    "time": 1712345738,
+    "type": "meta",
+    "detail_type": "disconnect",
+    "platform": "telegram",
+    "self": {
+        "platform": "telegram",
+        "user_id": "123456"
+    }
+})
+```
+
+系统处理：标记 Bot 为 `offline`，触发 `adapter.bot.offline` 生命周期事件。
+
+### 普通事件的自动发现
+
+除了 `meta` 事件外，普通事件（`message`/`notice`/`request`）中的 `self` 字段也会自动发现并注册 Bot、更新活跃时间。这意味着即使适配器不发送 `connect` 事件，框架也能从第一条普通事件中发现 Bot。
+
+### 适配器接入示例
+
+```python
+class MyAdapter(BaseAdapter):
+    async def start(self):
+        # 与平台建立连接...
+        connection = await self._connect()
+        
+        # 连接成功，发送 connect 事件
+        await adapter.emit({
+            "id": str(uuid4()),
+            "time": int(time.time()),
+            "type": "meta",
+            "detail_type": "connect",
+            "platform": "myplatform",
+            "self": {
+                "platform": "myplatform",
+                "user_id": self.bot_id,
+                "user_name": self.bot_name,
+                "avatar": self.bot_avatar
+            },
+            "myplatform_raw": raw_data,
+            "myplatform_raw_type": "connected"
+        })
+    
+    async def on_disconnect(self):
+        # 断开连接，发送 disconnect 事件
+        await adapter.emit({
+            "id": str(uuid4()),
+            "time": int(time.time()),
+            "type": "meta",
+            "detail_type": "disconnect",
+            "platform": "myplatform",
+            "self": {
+                "platform": "myplatform",
+                "user_id": self.bot_id
+            }
+        })
+```
+
+### 查询 Bot 状态
+
+```python
+# 获取所有适配器与 Bot 的完整状态（WebUI 友好）
+summary = sdk.adapter.get_status_summary()
+# {
+#     "adapters": {
+#         "telegram": {
+#             "status": "started",
+#             "bots": {
+#                 "123456": {
+#                     "status": "online",
+#                     "last_active": 1712345678.0,
+#                     "info": {"nickname": "MyBot"}
+#                 }
+#             }
+#         }
+#     }
+# }
+
+# 列出所有 Bot
+all_bots = sdk.adapter.list_bots()
+
+# 列出指定平台的 Bot
+tg_bots = sdk.adapter.list_bots("telegram")
+
+# 获取单个 Bot 详情
+info = sdk.adapter.get_bot_info("telegram", "123456")
+
+# 检查 Bot 是否在线
+if sdk.adapter.is_bot_online("telegram", "123456"):
+    print("Bot 在线")
+```
+
+### Bot 状态值
+
+| 状态 | 说明 |
+|------|------|
+| `online` | 在线（持续收到事件或适配器主动标记） |
+| `offline` | 离线（适配器主动标记或系统关闭时自动设置） |
+| `unknown` | 未知（仅注册但未确认状态） |
+
+### 生命周期事件
+
+| 事件名 | 触发时机 | 数据 |
+|--------|---------|------|
+| `adapter.bot.online` | 首次自动发现新 Bot | `{platform, bot_id, status}` |
+| `adapter.status.change` | 适配器状态变化（starting/started/stopping/stopped/stop_failed） | `{platform, status}` |
+
+```python
+# 监听 Bot 上线事件
+@sdk.lifecycle.on("adapter.bot.online")
+def on_bot_online(event):
+    print(f"Bot 上线: {event['data']['platform']}/{event['data']['bot_id']}")
+
+# 监听适配器状态变化
+@sdk.lifecycle.on("adapter.status.change")
+def on_status_change(event):
+    print(f"适配器状态: {event['data']['platform']} -> {event['data']['status']}")
+```
+
+> 系统关闭时（`shutdown`），所有 Bot 会自动被标记为 `offline`。
+
+## 相关文档
+
+- [核心模块 API](core-modules.md) - 核心模块 API
+- [事件系统 API](event-system.md) - Event 模块 API
+- [适配器开发指南](../developer-guide/adapters/) - 开发平台适配器
