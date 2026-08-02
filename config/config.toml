@@ -1,21 +1,45 @@
+[QQ_Adapter]
+status = true
+ws_host = "127.0.0.1"
+ws_port = 8080
+
+[ErisPulse.adapters]
+
+[ErisPulse.framework]
+enable_lazy_loading = true
+handler_max_concurrency = 64
+offline_bot_expiry = 3600
+proactive_gc_interval = 300
+strict_mode = 0
+uninit_timeout = 30
+
+[ErisPulse.i18n]
+language = "auto"
+
+[ErisPulse.logger]
+format = "rich"
+level = "INFO"
+log_files = []
+memory_limit = 1000
+
+[ErisPulse.modules]
+
 [ErisPulse.server]
 host = "0.0.0.0"
 port = 8000
 
-[ErisPulse.logger]
-level = "INFO"
+[ErisPulse.storage]
+use_global_db = false
 
 [ErisPulse.event.command]
-prefix = "/"
 case_sensitive = false
+prefix = "/"
 
-# QQ 适配器配置 (OneBot12)
-# 请根据你使用的 OneBot12 实现 (如 Lagrange, go-cqhttp 等) 修改配置
-[QQ_Adapter]
-status = true
-# WebSocket 连接地址
-ws_host = "127.0.0.1"
-ws_port = 8080
-# 如果使用反向 WebSocket，配置如下:
-# ws_reverse = true
-# ws_reverse_url = "ws://127.0.0.1:8080"
+[ErisPulse.event.message]
+ignore_self = true
+
+[ErisPulse.framework.strict_mode_exceptions]
+adapters = []
+modules = []
+
+[ErisPulse.master.users]

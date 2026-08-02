@@ -5,3 +5,6 @@ images/
 *.egg-info/
 dist/
 build/
+config/config.db
+*.zip
+zh-CN/
