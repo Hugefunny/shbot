@@ -1,6 +1,6 @@
 [project]
 name = "shbot"
-version = "1.0.0"
+version = "1.0.1"
 description = "QQ Bot with image storage functionality"
 requires-python = ">=3.10"
 dependencies = [
